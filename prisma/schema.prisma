@@ -1,0 +1,160 @@
+// Ren — Prisma schema (Postgres via Neon)
+// Mirrors doc Section 4. Key rules:
+//   - Every regenerate creates a NEW versioned `Draft` row (never overwrite).
+//   - Every rejection is logged as a PostEvent with a retryReason.
+//   - OAuth tokens are stored ENCRYPTED (AES-256-GCM, see lib/crypto.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7: connection URLs live in prisma.config.ts (used by the CLI for
+// migrations/introspection). The runtime client connects via a driver
+// adapter (@prisma/adapter-pg) — see lib/db.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+enum Platform {
+  linkedin
+  x
+}
+
+enum IdeaSource {
+  manual
+  news
+}
+
+enum IdeaStatus {
+  draft
+  finalized
+  archived
+}
+
+enum DraftStatus {
+  generated
+  critiqued
+  rewritten
+  approved
+  rejected
+  posted
+}
+
+enum PostAction {
+  posted
+  retry
+  discarded
+}
+
+enum RetryReason {
+  too_salesy
+  weak_hook
+  not_authentic
+  other
+}
+
+model User {
+  id          String   @id @default(cuid())
+  clerkUserId String   @unique @map("clerk_user_id")
+  email       String
+  name        String?
+  avatarUrl   String?  @map("avatar_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  oauthConnections OauthConnection[]
+  ideas            Idea[]
+
+  @@map("users")
+}
+
+model OauthConnection {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  platform     Platform
+  accessToken  String   @map("access_token") // encrypted at rest
+  refreshToken String?  @map("refresh_token") // encrypted at rest
+  expiresAt    DateTime? @map("expires_at")
+  scopes       String[]
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, platform])
+  @@map("oauth_connections")
+}
+
+model Idea {
+  id          String     @id @default(cuid())
+  userId      String     @map("user_id")
+  source      IdeaSource
+  seedText    String     @map("seed_text")
+  seedNewsUrl String?    @map("seed_news_url")
+  status      IdeaStatus @default(draft)
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  drafts Draft[]
+
+  @@index([userId])
+  @@map("ideas")
+}
+
+model Draft {
+  id        String      @id @default(cuid())
+  ideaId    String      @map("idea_id")
+  version   Int
+  status    DraftStatus @default(generated)
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  idea             Idea             @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  platformVariants PlatformVariant[]
+
+  @@unique([ideaId, version])
+  @@index([ideaId])
+  @@map("drafts")
+}
+
+model PlatformVariant {
+  id               String   @id @default(cuid())
+  draftId          String   @map("draft_id")
+  platform         Platform
+  content          String // the chosen full draft for this platform
+  hookAlternatives Json?    @map("hook_alternatives") // 2-3 candidate hooks (Section 5.3)
+  score            Json? // rubric: hook_strength, clarity, authenticity, cta_presence, formatting_fit
+  critiqueNotes    String?  @map("critique_notes")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  draft      Draft       @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  postEvents PostEvent[]
+
+  @@index([draftId])
+  @@map("platform_variants")
+}
+
+model PostEvent {
+  id                String       @id @default(cuid())
+  platformVariantId String       @map("platform_variant_id")
+  action            PostAction
+  retryReason       RetryReason? @map("retry_reason")
+  externalPostId    String?      @map("external_post_id")
+  externalPostUrl   String?      @map("external_post_url")
+  createdAt         DateTime     @default(now()) @map("created_at")
+
+  platformVariant PlatformVariant @relation(fields: [platformVariantId], references: [id], onDelete: Cascade)
+
+  @@index([platformVariantId])
+  @@map("post_events")
+}
+
+model NewsCache {
+  id        String   @id @default(cuid())
+  category  String
+  headline  String
+  sourceUrl String   @map("source_url")
+  summary   String?
+  fetchedAt DateTime @default(now()) @map("fetched_at")
+
+  @@index([category])
+  @@map("news_cache")
+}

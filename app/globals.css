@@ -1,26 +1,122 @@
 @import "tailwindcss";
 
+/*
+  Ren design tokens (doc Section 8): calm, precise, content-first.
+  Dark-mode-first with a clean light mode. Near-black/near-white base + ONE
+  accent used sparingly for primary actions and score indicators.
+*/
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Dark is the default surface. */
+  --background: oklch(0.145 0.004 285);
+  --foreground: oklch(0.97 0 0);
+
+  --card: oklch(0.185 0.004 285);
+  --card-foreground: oklch(0.97 0 0);
+
+  --muted: oklch(0.235 0.004 285);
+  --muted-foreground: oklch(0.68 0.005 285);
+
+  --border: oklch(0.275 0.005 285);
+  --input: oklch(0.3 0.005 285);
+
+  /* Single accent — blue by default. Overridable per-user via [data-accent]
+     (see below). Used sparingly for primary actions and score indicators. */
+  --accent: oklch(0.62 0.2 258);
+  --accent-foreground: oklch(0.99 0 0);
+  --ring: oklch(0.62 0.2 258);
+
+  /* Semantic score colors (used only on score indicators). */
+  --good: oklch(0.72 0.15 155);
+  --warn: oklch(0.75 0.15 75);
+  --bad: oklch(0.65 0.2 25);
+
+  --radius: 0.75rem;
+}
+
+/*
+  Selectable accent themes (doc Section 8: "one accent color"). The choice is
+  stored in the `ren-accent` cookie and applied as data-accent on <html> in the
+  root layout, so it's set before paint (no flash). `:root[data-accent=...]`
+  outranks both :root and .light, so it wins in either color mode.
+*/
+:root[data-accent="blue"] {
+  --accent: oklch(0.62 0.2 258);
+  --accent-foreground: oklch(0.99 0 0);
+  --ring: oklch(0.62 0.2 258);
+}
+
+:root[data-accent="yellow"] {
+  --accent: oklch(0.86 0.17 95);
+  --accent-foreground: oklch(0.24 0.03 95);
+  --ring: oklch(0.86 0.17 95);
+}
+
+:root[data-accent="green"] {
+  --accent: rgb(0 255 153);
+  --accent-foreground: oklch(0.22 0.03 165);
+  --ring: rgb(0 255 153);
+}
+
+.light {
+  --background: oklch(0.995 0 0);
+  --foreground: oklch(0.17 0.004 285);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.17 0.004 285);
+
+  --muted: oklch(0.965 0.002 285);
+  --muted-foreground: oklch(0.47 0.006 285);
+
+  --border: oklch(0.9 0.003 285);
+  --input: oklch(0.88 0.004 285);
+
+  --accent: oklch(0.55 0.2 258);
+  --accent-foreground: oklch(0.99 0 0);
+  --ring: oklch(0.55 0.2 258);
+
+  --good: oklch(0.6 0.15 155);
+  --warn: oklch(0.68 0.15 75);
+  --bad: oklch(0.58 0.2 25);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-ring: var(--ring);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Selection uses the accent, quietly. */
+::selection {
+  background: color-mix(in oklch, var(--accent) 30%, transparent);
 }
