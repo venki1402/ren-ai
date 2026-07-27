@@ -53,6 +53,14 @@ enum RetryReason {
   other
 }
 
+// Mirrors lib/persona-shared.ts PERSONAS exactly (like Platform ↔ lib/platforms).
+enum Persona {
+  student
+  developer
+  entrepreneur
+  generalist
+}
+
 model User {
   id          String   @id @default(cuid())
   clerkUserId String   @unique @map("clerk_user_id")
@@ -60,6 +68,13 @@ model User {
   name        String?
   avatarUrl   String?  @map("avatar_url")
   createdAt   DateTime @default(now()) @map("created_at")
+
+  // Identity signal for generation (doc Section 5 — persona-conditioned drafting).
+  // persona is a coarse voice prior; personaContext is optional freeform detail.
+  // onboardedAt gates the (skippable) onboarding step — null = not shown yet.
+  persona        Persona   @default(generalist)
+  personaContext Json?     @map("persona_context")
+  onboardedAt    DateTime? @map("onboarded_at")
 
   oauthConnections OauthConnection[]
   ideas            Idea[]
@@ -137,6 +152,7 @@ model PostEvent {
   platformVariantId String       @map("platform_variant_id")
   action            PostAction
   retryReason       RetryReason? @map("retry_reason")
+  retryInstruction  String?      @map("retry_instruction") // freeform "change this" note
   externalPostId    String?      @map("external_post_id")
   externalPostUrl   String?      @map("external_post_url")
   createdAt         DateTime     @default(now()) @map("created_at")

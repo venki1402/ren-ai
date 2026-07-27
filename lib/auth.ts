@@ -33,8 +33,15 @@ export async function requireUser(): Promise<User> {
   const name =
     [cu?.firstName, cu?.lastName].filter(Boolean).join(" ").trim() || null;
 
-  return db.user.create({
-    data: {
+  // Upsert, not create: on the pooled Neon endpoint a brand-new user's row can
+  // be missed by the findUnique above if a near-simultaneous request already
+  // created it (e.g. a page render followed immediately by a Server Action, as
+  // in onboarding). A plain create would then trip the clerkUserId unique
+  // constraint (P2002) and 500. Upsert makes first-sight creation idempotent.
+  return db.user.upsert({
+    where: { clerkUserId: userId },
+    update: {},
+    create: {
       clerkUserId: userId,
       email,
       name,

@@ -8,7 +8,7 @@ import { TONE_VAR, toneFor, type RubricScore } from "@/lib/score";
 export function ScoreBars({ score }: { score: RubricScore }) {
   return (
     <dl className="flex flex-col gap-2">
-      {RUBRIC_AXES.map((axis) => {
+      {RUBRIC_AXES.filter((axis) => typeof score[axis] === "number").map((axis) => {
         const value = score[axis];
         const tone = TONE_VAR[toneFor(value)];
         return (

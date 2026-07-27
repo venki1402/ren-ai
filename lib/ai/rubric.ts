@@ -25,6 +25,11 @@ export const rubricSchema = z.object({
     .min(0)
     .max(10)
     .describe("Fits the platform's formatting norms (length, breaks, structure)?"),
+  voice_fit: z
+    .number()
+    .min(0)
+    .max(10)
+    .describe("Reads like this specific creator's POV/voice, not a generic post?"),
 });
 
 export type RubricScore = z.infer<typeof rubricSchema>;
@@ -35,6 +40,7 @@ export const RUBRIC_AXES = [
   "authenticity",
   "cta_presence",
   "formatting_fit",
+  "voice_fit",
 ] as const;
 
 export type RubricAxis = (typeof RUBRIC_AXES)[number];
@@ -45,6 +51,7 @@ export const RUBRIC_AXIS_LABELS: Record<RubricAxis, string> = {
   authenticity: "Authenticity",
   cta_presence: "CTA",
   formatting_fit: "Formatting fit",
+  voice_fit: "Voice fit",
 };
 
 // Below this on any axis triggers an auto-rewrite pass (capped, Section 5.4).

@@ -1,10 +1,13 @@
 import { completeObject } from "@/lib/ai/groq";
 import {
-  PLATFORM_SYSTEM_PROMPTS,
   buildCritiquePrompt,
   buildGenerationPrompt,
+  buildPlanPrompt,
   buildRewritePrompt,
+  buildSystemPrompt,
   draftGenSchema,
+  planSchema,
+  type Plan,
 } from "@/lib/ai/prompts";
 import {
   MAX_AUTO_REWRITES,
@@ -14,6 +17,7 @@ import {
   type RubricScore,
 } from "@/lib/ai/rubric";
 import type { PlatformId } from "@/lib/platforms";
+import type { PersonaProfile } from "@/lib/persona-shared";
 
 // Draft generation + critique/rewrite loop for a single platform (Sections
 // 5.3-5.4). Drafting + critique run on the primary model; the lighter rewrite
@@ -30,6 +34,7 @@ export interface GeneratedVariant {
 
 type Feedback = {
   retryReason?: string;
+  customInstruction?: string;
   critiqueNotes?: string;
 };
 
@@ -37,35 +42,55 @@ type Feedback = {
 export async function critiqueContent(
   content: string,
   platform: PlatformId,
+  profile: PersonaProfile,
 ): Promise<Critique> {
   return completeObject({
     tier: "primary",
-    prompt: buildCritiquePrompt(content, platform),
+    prompt: buildCritiquePrompt(content, platform, profile),
     schema: critiqueSchema,
     temperature: 0.2,
   });
 }
 
+/** Plan step (doc Section 5): pick the angle, hook strategy, and how loud the
+ * creator's identity should be — before any drafting happens. */
+async function planPost(
+  seedText: string,
+  platform: PlatformId,
+  profile: PersonaProfile,
+): Promise<Plan> {
+  return completeObject({
+    tier: "light",
+    prompt: buildPlanPrompt(seedText, platform, profile),
+    schema: planSchema,
+    temperature: 0.4,
+  });
+}
+
 /**
- * Generate one platform variant: draft → critique → (auto-rewrite ×N if below
- * threshold) → critique again. Caps rewrites so it never loops silently.
+ * Generate one platform variant: plan → draft → critique → (auto-rewrite ×N if
+ * below threshold) → critique again. The plan decides the angle and how much
+ * the creator's persona surfaces; drafting/critique are persona-conditioned.
+ * Caps rewrites so it never loops silently.
  */
 export async function generatePlatformVariant(
   seedText: string,
   platform: PlatformId,
+  profile: PersonaProfile,
   feedback?: Feedback,
 ): Promise<GeneratedVariant> {
-  const system = PLATFORM_SYSTEM_PROMPTS[platform];
+  const system = buildSystemPrompt(platform, profile);
+  const plan = await planPost(seedText, platform, profile);
 
   let draft = await completeObject({
     tier: "primary",
     system,
-    prompt: buildGenerationPrompt(seedText, platform, feedback),
+    prompt: buildGenerationPrompt(seedText, platform, plan, feedback),
     schema: draftGenSchema,
     temperature: 0.8,
   });
 
-  let review = await critiqueContent(draft.content, platform);
+  let review = await critiqueContent(draft.content, platform, profile);
   let autoRewrites = 0;
 
   while (
@@ -81,7 +106,7 @@ export async function generatePlatformVariant(
       schema: draftGenSchema,
       temperature: 0.7,
     });
-    review = await critiqueContent(draft.content, platform);
+    review = await critiqueContent(draft.content, platform, profile);
   }
 
   return {

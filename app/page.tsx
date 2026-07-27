@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowRight, Sparkles } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { SubmitButton } from "@/components/submit-button";
@@ -14,6 +15,8 @@ import { PLATFORM_LABELS, type PlatformId } from "@/lib/platforms";
 // input as the hero, and the list of recent ideas. Content-first, quiet chrome.
 export default async function Home() {
   const user = await requireUser();
+  // First-time users see the (skippable) persona step before the dashboard.
+  if (!user.onboardedAt) redirect("/onboarding");
   const ideas = await getIdeasForUser(user.id);
 
   return (

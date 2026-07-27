@@ -71,6 +71,7 @@ export function VariantCard({
   const [draft, setDraft] = useState(variant.content);
   const [showDetails, setShowDetails] = useState(false);
   const [showRetry, setShowRetry] = useState(false);
+  const [retryNote, setRetryNote] = useState("");
   const [showHooks, setShowHooks] = useState(false);
   // After a publish hand-off there's no callback, so we ask the user to confirm.
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
@@ -222,26 +223,55 @@ export function VariantCard({
         )}
       </div>
 
-      {/* Retry reason chips (doc 5.5) */}
+      {/* Retry reason chips + freeform instruction (doc 5.5) */}
       {showRetry && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-3">
-          <span className="text-xs text-muted-foreground">Why regenerate?</span>
-          {RETRY_CHIPS.map((chip) => (
-            <button
-              key={chip.value}
-              type="button"
+        <div className="flex flex-col gap-3 border-t border-border px-5 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Why regenerate?</span>
+            {RETRY_CHIPS.map((chip) => (
+              <button
+                key={chip.value}
+                type="button"
+                disabled={pending}
+                onClick={() =>
+                  run(async () => {
+                    await retryVariant(variant.id, chip.value);
+                    setShowRetry(false);
+                    setRetryNote("");
+                  })
+                }
+                className="rounded-full border border-border px-3 py-1 text-xs transition-colors hover:border-[color-mix(in_oklch,var(--accent)_45%,var(--border))] hover:text-foreground disabled:opacity-50"
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-col gap-2">
+            <Textarea
+              value={retryNote}
+              onChange={(e) => setRetryNote(e.target.value)}
+              rows={2}
               disabled={pending}
+              placeholder="Or tell Ren exactly what to change — e.g. “lead with the Go migration story, cut the stats”"
+              className="min-h-16 text-xs leading-relaxed"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending || !retryNote.trim()}
+              className="self-end"
               onClick={() =>
                 run(async () => {
-                  await retryVariant(variant.id, chip.value);
+                  await retryVariant(variant.id, "other", retryNote.trim());
                   setShowRetry(false);
+                  setRetryNote("");
                 })
               }
-              className="rounded-full border border-border px-3 py-1 text-xs transition-colors hover:border-[color-mix(in_oklch,var(--accent)_45%,var(--border))] hover:text-foreground disabled:opacity-50"
             >
-              {chip.label}
-            </button>
-          ))}
+              {pending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              Regenerate with these notes
+            </Button>
+          </div>
         </div>
       )}
 

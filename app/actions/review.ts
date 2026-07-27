@@ -9,6 +9,7 @@ import {
   type GeneratedVariant,
 } from "@/lib/ai/generate";
 import { carryForward, persistDraftVersion } from "@/lib/drafts";
+import { profileFromUser } from "@/lib/persona";
 import { getAdapter } from "@/lib/adapters";
 import { getValidToken } from "@/lib/oauth";
 import type { PostResult } from "@/lib/adapters/types";
@@ -21,7 +22,8 @@ const RETRY_PHRASES: Record<RetryReason, string> = {
   other: "The creator wants a different take.",
 };
 
-// Load a variant + its draft/idea and confirm the current user owns it.
+// Load a variant + its draft/idea and confirm the current user owns it. Returns
+// the owning user too, since generation/critique is conditioned on their persona.
 async function loadOwnedVariant(variantId: string) {
   const user = await requireUser();
   const variant = await db.platformVariant.findUnique({
@@ -33,25 +35,39 @@ async function loadOwnedVariant(variantId: string) {
   if (!variant || variant.draft.idea.userId !== user.id) {
     throw new Error("Not found");
   }
-  return variant;
+  return { user, variant };
 }
 
-// Retry: log the reason, regenerate this platform with the feedback injected,
-// carry the other platform forward unchanged, save as a NEW draft version.
+// Retry: log the reason (+ any freeform instruction), regenerate this platform
+// with the feedback injected, carry the other platform forward unchanged, save
+// as a NEW draft version.
 export async function retryVariant(
   variantId: string,
   retryReason: RetryReason,
+  customInstruction?: string,
 ): Promise<void> {
-  const variant = await loadOwnedVariant(variantId);
+  const { user, variant } = await loadOwnedVariant(variantId);
   const idea = variant.draft.idea;
+  const instruction = customInstruction?.trim() || null;
 
   await db.postEvent.create({
-    data: { platformVariantId: variantId, action: "retry", retryReason },
+    data: {
+      platformVariantId: variantId,
+      action: "retry",
+      retryReason,
+      retryInstruction: instruction,
+    },
   });
 
-  const regenerated = await generatePlatformVariant(idea.seedText, variant.platform, {
-    retryReason: RETRY_PHRASES[retryReason],
-  });
+  const regenerated = await generatePlatformVariant(
+    idea.seedText,
+    variant.platform,
+    profileFromUser(user),
+    {
+      retryReason: RETRY_PHRASES[retryReason],
+      customInstruction: instruction ?? undefined,
+    },
+  );
 
   const carried: GeneratedVariant[] = variant.draft.platformVariants
     .filter((v) => v.platform !== variant.platform)
@@ -67,12 +83,16 @@ export async function editVariant(
   variantId: string,
   newContent: string,
 ): Promise<void> {
-  const variant = await loadOwnedVariant(variantId);
+  const { user, variant } = await loadOwnedVariant(variantId);
   const idea = variant.draft.idea;
   const content = newContent.trim();
   if (!content) throw new Error("Content is required");
 
-  const review = await critiqueContent(content, variant.platform);
+  const review = await critiqueContent(
+    content,
+    variant.platform,
+    profileFromUser(user),
+  );
   const edited: GeneratedVariant = {
     platform: variant.platform,
     content,
@@ -94,7 +114,7 @@ export async function editVariant(
 
 // Discard: logged, no further action (doc 5.5).
 export async function discardVariant(variantId: string): Promise<void> {
-  const variant = await loadOwnedVariant(variantId);
+  const { variant } = await loadOwnedVariant(variantId);
   await db.postEvent.create({
     data: { platformVariantId: variantId, action: "discarded" },
   });
@@ -108,7 +128,7 @@ export async function discardVariant(variantId: string): Promise<void> {
 //   - LinkedIn WITHOUT a connection: fall back to copy-to-clipboard (Phase 1
 //     behavior) so the flow still works before the user connects.
 export async function getPublishAction(variantId: string): Promise<PostResult> {
-  const variant = await loadOwnedVariant(variantId);
+  const { variant } = await loadOwnedVariant(variantId);
   const platform = variant.platform;
   const adapter = getAdapter(platform);
 
@@ -146,7 +166,7 @@ export async function confirmPosted(
   variantId: string,
   externalPostUrl?: string,
 ): Promise<void> {
-  const variant = await loadOwnedVariant(variantId);
+  const { variant } = await loadOwnedVariant(variantId);
   await db.postEvent.create({
     data: {
       platformVariantId: variantId,

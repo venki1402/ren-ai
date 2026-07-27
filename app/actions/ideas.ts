@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { generatePlatformVariant } from "@/lib/ai/generate";
 import { persistDraftVersion } from "@/lib/drafts";
+import { profileFromUser } from "@/lib/persona";
 import { PLATFORMS } from "@/lib/platforms";
 
 // Create a brainstorm idea (manual seed or news-seeded). Returns the idea id.
@@ -58,9 +59,10 @@ export async function finalizeAndGenerate(ideaId: string): Promise<void> {
     data: { status: "finalized" },
   });
 
+  const profile = profileFromUser(user);
   const variants = await Promise.all(
     PLATFORMS.map((platform) =>
-      generatePlatformVariant(idea.seedText, platform),
+      generatePlatformVariant(idea.seedText, platform, profile),
     ),
   );
 

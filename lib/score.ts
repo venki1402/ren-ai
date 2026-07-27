@@ -9,18 +9,25 @@ import {
 // The rubric is explicit and transparent by design — NOT a black-box "virality
 // score" (doc Note 10).
 
-/** Coerce a stored `Json` score into a typed RubricScore, or null if malformed. */
+/**
+ * Coerce a stored `Json` score into a typed RubricScore, or null if malformed.
+ * Tolerant of axis drift: a score persisted before an axis existed (e.g. older
+ * variants without `voice_fit`) is still valid — the missing axis is simply
+ * absent, and the display/mean helpers below skip non-numeric axes.
+ */
 export function parseScore(raw: unknown): RubricScore | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
-  const ok = RUBRIC_AXES.every((axis) => typeof obj[axis] === "number");
-  return ok ? (obj as RubricScore) : null;
+  const hasAny = RUBRIC_AXES.some((axis) => typeof obj[axis] === "number");
+  return hasAny ? (obj as RubricScore) : null;
 }
 
-/** Mean of the five axes, 0-10, rounded to one decimal. */
+/** Mean of the present numeric axes, 0-10, rounded to one decimal. */
 export function overallScore(score: RubricScore): number {
-  const sum = RUBRIC_AXES.reduce((acc, axis) => acc + score[axis], 0);
-  return Math.round((sum / RUBRIC_AXES.length) * 10) / 10;
+  const present = RUBRIC_AXES.filter((axis) => typeof score[axis] === "number");
+  if (present.length === 0) return 0;
+  const sum = present.reduce((acc, axis) => acc + score[axis], 0);
+  return Math.round((sum / present.length) * 10) / 10;
 }
 
 export type ScoreTone = "good" | "warn" | "bad";
