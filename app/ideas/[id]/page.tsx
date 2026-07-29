@@ -94,6 +94,9 @@ function toView(v: LatestDraft["platformVariants"][number]): VariantView {
       : [],
     score: parseScore(v.score),
     critiqueNotes: v.critiqueNotes,
+    citations: Array.isArray(v.citations)
+      ? (v.citations as VariantView["citations"])
+      : [],
     posted,
     discarded,
   };

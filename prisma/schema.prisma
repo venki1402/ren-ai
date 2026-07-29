@@ -5,14 +5,16 @@
 //   - OAuth tokens are stored ENCRYPTED (AES-256-GCM, see lib/crypto.ts).
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"] // manage the pgvector extension
 }
 
 // Prisma 7: connection URLs live in prisma.config.ts (used by the CLI for
 // migrations/introspection). The runtime client connects via a driver
 // adapter (@prisma/adapter-pg) — see lib/db.ts.
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [vector] // pgvector, for embeddings (RAG). Neon supports it.
 }
 
 enum Platform {
@@ -78,6 +80,7 @@ model User {
 
   oauthConnections OauthConnection[]
   ideas            Idea[]
+  postEmbeddings   PostEmbedding[]
 
   @@map("users")
 }
@@ -138,10 +141,12 @@ model PlatformVariant {
   hookAlternatives Json?    @map("hook_alternatives") // 2-3 candidate hooks (Section 5.3)
   score            Json? // rubric: hook_strength, clarity, authenticity, cta_presence, formatting_fit
   critiqueNotes    String?  @map("critique_notes")
+  citations        Json?    @map("citations") // grounding sources (v2 pipeline)
   createdAt        DateTime @default(now()) @map("created_at")
 
-  draft      Draft       @relation(fields: [draftId], references: [id], onDelete: Cascade)
-  postEvents PostEvent[]
+  draft         Draft          @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  postEvents    PostEvent[]
+  postEmbedding PostEmbedding?
 
   @@index([draftId])
   @@map("platform_variants")
@@ -173,4 +178,97 @@ model NewsCache {
 
   @@index([category])
   @@map("news_cache")
+}
+
+// ─── RAG (retrieval-augmented generation) ──────────────────────────────────
+// Two indexes, both keyed by a vector(384) embedding (all-MiniLM-L6-v2):
+//   - PostEmbedding: the user's OWN accepted/posted posts → voice few-shot.
+//   - DocumentChunk: chunked source material (news article text) → grounding.
+// The `embedding` columns are Unsupported() because Prisma has no vector type;
+// they are written and queried with raw SQL (see lib/ai/retrieval.ts). HNSW
+// cosine indexes are added in the migration.
+
+model PostEmbedding {
+  id                String   @id @default(cuid())
+  userId            String   @map("user_id")
+  platformVariantId String   @unique @map("platform_variant_id")
+  platform          Platform
+  content           String // the post text, kept for few-shot rendering
+  score             Float? // overall rubric score at accept time (for ranking)
+  embedding         Unsupported("vector(384)")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platformVariant PlatformVariant @relation(fields: [platformVariantId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("post_embeddings")
+}
+
+model DocumentChunk {
+  id         String   @id @default(cuid())
+  sourceUrl  String   @map("source_url")
+  title      String?
+  chunkIndex Int      @map("chunk_index")
+  content    String
+  embedding  Unsupported("vector(384)")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([sourceUrl])
+  @@map("document_chunks")
+}
+
+// ─── Observability (LLM tracing) ───────────────────────────────────────────
+// A Trace is one logical run (e.g. generating a draft for an idea). Spans are
+// the nested steps within it — each LLM call, agent, tool, or retrieval — so a
+// full generation renders as a tree with token/cost/latency at every node.
+// Writes are best-effort and must never break generation.
+
+model Trace {
+  id        String    @id @default(cuid())
+  userId    String?   @map("user_id")
+  ideaId    String?   @map("idea_id")
+  name      String // e.g. "generate:idea" | "retry:x" | "eval:run"
+  status    String    @default("running") // running | ok | error
+  metadata  Json?
+  costUsd   Decimal?  @map("cost_usd") @db.Decimal(12, 6) // rolled up from spans
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+
+  spans Span[]
+
+  @@index([userId])
+  @@index([ideaId])
+  @@index([name])
+  @@map("traces")
+}
+
+model Span {
+  id       String  @id @default(cuid())
+  traceId  String  @map("trace_id")
+  parentId String? @map("parent_id") // nesting: agent → its LLM/tool calls
+
+  name String // "plan" | "draft" | "critique" | "agent:researcher" | "retrieve:voice"
+  kind String // llm | agent | tool | retrieval | embedding | function
+
+  model            String?
+  tier             String?
+  inputTokens      Int?     @map("input_tokens")
+  outputTokens     Int?     @map("output_tokens")
+  totalTokens      Int?     @map("total_tokens")
+  costUsd          Decimal? @map("cost_usd") @db.Decimal(12, 6)
+  latencyMs        Int?     @map("latency_ms")
+  status           String   @default("ok") // ok | error
+  error            String?
+  input            Json? // truncated prompt/args for replay + debugging
+  output           Json? // truncated result
+  metadata         Json?
+  startedAt        DateTime  @default(now()) @map("started_at")
+  endedAt          DateTime? @map("ended_at")
+
+  trace Trace @relation(fields: [traceId], references: [id], onDelete: Cascade)
+
+  @@index([traceId])
+  @@index([parentId])
+  @@map("spans")
 }

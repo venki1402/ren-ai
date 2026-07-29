@@ -29,6 +29,9 @@ export async function persistDraftVersion(
           hookAlternatives: v.hookAlternatives as Prisma.InputJsonValue,
           score: v.score as unknown as Prisma.InputJsonValue,
           critiqueNotes: v.critiqueNotes,
+          citations: v.citations
+            ? (v.citations as unknown as Prisma.InputJsonValue)
+            : undefined,
         })),
       },
     },
@@ -44,6 +47,7 @@ export function carryForward(v: {
   hookAlternatives: unknown;
   score: unknown;
   critiqueNotes: string | null;
+  citations?: unknown;
 }): GeneratedVariant {
   return {
     platform: v.platform,
@@ -54,5 +58,8 @@ export function carryForward(v: {
     score: (v.score ?? {}) as RubricScore,
     critiqueNotes: v.critiqueNotes ?? "",
     autoRewrites: 0,
+    citations: Array.isArray(v.citations)
+      ? (v.citations as GeneratedVariant["citations"])
+      : undefined,
   };
 }

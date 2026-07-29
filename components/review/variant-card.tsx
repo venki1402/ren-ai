@@ -28,6 +28,12 @@ import {
   confirmPosted,
 } from "@/app/actions/review";
 
+export type Citation = {
+  sourceUrl: string;
+  title: string | null;
+  snippet: string;
+};
+
 export type VariantView = {
   id: string;
   platform: PlatformId;
@@ -35,6 +41,7 @@ export type VariantView = {
   hookAlternatives: string[];
   score: RubricScore | null;
   critiqueNotes: string | null;
+  citations: Citation[];
   posted: boolean;
   discarded: boolean;
 };
@@ -47,6 +54,16 @@ const RETRY_CHIPS: { value: RetryReason; label: string }[] = [
   { value: "not_authentic", label: "Not authentic" },
   { value: "other", label: "Other" },
 ];
+
+// Collapse multiple chunks from the same article into one listed source.
+function dedupeCitations(items: Citation[]): Citation[] {
+  const seen = new Set<string>();
+  return items.filter((c) => {
+    if (seen.has(c.sourceUrl)) return false;
+    seen.add(c.sourceUrl);
+    return true;
+  });
+}
 
 // Replace the first non-empty line of the content with a chosen alternative
 // hook. Persisted as a new version via editVariant (never an overwrite).
@@ -219,6 +236,32 @@ export function VariantCard({
                 ))}
               </ul>
             )}
+          </div>
+        )}
+
+        {/* Grounding citations (v2 pipeline) — the sources the post was
+            grounded + fact-checked against. */}
+        {!editing && variant.citations.length > 0 && (
+          <div className="mt-4 border-t border-border pt-3">
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+              Grounded on {variant.citations.length} source
+              {variant.citations.length > 1 ? "s" : ""}
+            </p>
+            <ul className="flex flex-col gap-1">
+              {dedupeCitations(variant.citations).map((c, i) => (
+                <li key={i} className="truncate text-xs">
+                  <a
+                    href={c.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent hover:underline"
+                    title={c.snippet}
+                  >
+                    {c.title ?? c.sourceUrl}
+                  </a>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>

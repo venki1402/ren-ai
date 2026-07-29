@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: # manual trigger, e.g. to run the paid eval job on demand
+
+jobs:
+  # Fast, deterministic gate — no network/LLM/DB needed. Runs on every PR.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Prisma client is needed for typecheck (generated types). No DB required.
+      - run: npx prisma generate
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm test # vitest unit tests (pure; offline)
+
+  # Generation-quality regression via the real pipeline. Paid + rate-limited, so
+  # it does NOT run on every PR: only on manual dispatch or a PR labeled
+  # `run-evals`. Gated on the rubric-threshold assertions inside the suite, so a
+  # quality regression fails the job.
+  evals:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-evals')
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # Compare pipelines by flipping this in the dispatch inputs / repo vars.
+      REN_PIPELINE_V2: ${{ vars.REN_PIPELINE_V2 || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run eval

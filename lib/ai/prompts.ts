@@ -9,6 +9,7 @@ import {
   type PersonaId,
   type PersonaProfile,
 } from "@/lib/persona-shared";
+import type { ResearchBrief } from "@/lib/ai/agents/types";
 
 // Platform-specific prompting (doc Section 6). Each platform gets its OWN
 // system prompt — never one prompt reformatted per platform.
@@ -170,14 +171,18 @@ type GenerationFeedback = {
   retryReason?: string; // human-readable retry chip reason
   customInstruction?: string; // freeform "change exactly this" from the creator
   critiqueNotes?: string; // notes from the critique loop
+  priorPattern?: string; // recurring feedback across this creator's history
 };
 
-/** Build the generation user-prompt for a platform from a seed idea + plan. */
+/** Build the generation user-prompt for a platform from a seed idea + plan.
+ * `research` (v2 pipeline) injects the creator's own past posts as voice
+ * few-shot and grounding facts + citations for news-seeded posts. */
 export function buildGenerationPrompt(
   seedText: string,
   platform: PlatformId,
   plan: Plan,
   feedback?: GenerationFeedback,
+  research?: ResearchBrief,
 ): string {
   const parts = [
     `Seed idea from the creator:\n"""\n${seedText}\n"""`,
@@ -185,8 +190,33 @@ export function buildGenerationPrompt(
 - Angle: ${plan.angle}
 - Hook strategy: ${plan.hookStrategy}
 - Identity salience: ${SALIENCE_INSTRUCTION[plan.identitySalience]}`,
-    `Produce 2-3 candidate hooks and one full ${platform === "x" ? "X" : "LinkedIn"} post that leads with the strongest hook.`,
   ];
+
+  // Voice few-shot: the creator's OWN past posts, so the draft matches their
+  // established voice — imitate the voice, NOT the topic.
+  if (research?.voiceExemplars.length) {
+    const shots = research.voiceExemplars
+      .map((e, i) => `Example ${i + 1} (${e.platform}):\n"""\n${e.content}\n"""`)
+      .join("\n\n");
+    parts.push(
+      `The creator's own past posts, for VOICE reference only (match the tone, rhythm, and diction — do not reuse their topics or copy phrasing):\n\n${shots}`,
+    );
+  }
+
+  // Grounding: real facts + citations the post may draw on.
+  if (research?.citations.length) {
+    const facts = research.citations
+      .map((c, i) => `[${i + 1}] ${c.title ?? c.sourceUrl}\n${c.snippet}`)
+      .join("\n\n");
+    parts.push(
+      `Grounding material (use only facts supported here; do not invent specifics). Research brief:\n${research.brief}\n\nSources:\n${facts}`,
+    );
+  }
+
+  parts.push(
+    `Produce 2-3 candidate hooks and one full ${platform === "x" ? "X" : "LinkedIn"} post that leads with the strongest hook.`,
+  );
+
   // A creator's explicit instruction is the strongest signal — it outranks the
   // canned retry reason.
   if (feedback?.customInstruction) {
@@ -200,6 +230,10 @@ export function buildGenerationPrompt(
   }
   if (feedback?.critiqueNotes) {
     parts.push(`Critique of the previous attempt to fix:\n${feedback.critiqueNotes}`);
+  }
+  // Learned pattern from this creator's rejection history (feedback loop).
+  if (feedback?.priorPattern) {
+    parts.push(`Learned from this creator's history:\n${feedback.priorPattern}`);
   }
   return parts.join("\n\n");
 }
@@ -240,6 +274,67 @@ Critique to address:
 ${critiqueNotes}
 
 Current post:
+"""
+${content}
+"""`;
+}
+
+// ─── v2 multi-agent pipeline prompts ────────────────────────────────────────
+
+/** System prompt for the tool-using Researcher agent. */
+export function buildResearchSystemPrompt(profile: PersonaProfile): string {
+  const persona = buildPersonaBlock(profile);
+  return `You are a research assistant preparing to help write a social post for one specific creator. You have tools to gather evidence. Use them, then write a short brief.
+
+${persona || "The creator has no stored persona; focus on the idea itself."}
+
+Guidance:
+- Call findVoiceExemplars to retrieve the creator's OWN past posts (for voice reference). Query it with the core topic of the seed idea.
+- If the idea is seeded from a source, call findGrounding to pull real facts you can cite. Query it with the specific claims/topics you'd want to verify.
+- Do not fabricate facts. If grounding returns nothing useful, say so.
+- Keep the final brief under 150 words: the sharpest angle, any concrete facts worth citing, and one note on the creator's voice.`;
+}
+
+/** User prompt kicking off the Researcher agent. */
+export function buildResearchPrompt(
+  seedText: string,
+  platform: PlatformId,
+  hasSource: boolean,
+): string {
+  return `Seed idea:\n"""\n${seedText}\n"""\n\nTarget platform: ${platform === "x" ? "X" : "LinkedIn"}.\n${hasSource ? "This idea has a source to ground against — gather citable facts." : "No external source; focus on voice exemplars and angle."}\n\nGather what you need with your tools, then write the brief.`;
+}
+
+// Fact-check pass for grounded posts: verify claims against the cited sources.
+export const factCheckSchema = z.object({
+  supported: z
+    .boolean()
+    .describe("True if every concrete factual claim is supported by the sources."),
+  issues: z
+    .array(z.string())
+    .describe("Specific unsupported or contradicted claims found (empty if none)."),
+  revisedContent: z
+    .string()
+    .nullable()
+    .describe(
+      "If unsupported claims were found, the post rewritten to remove/soften them; otherwise null.",
+    ),
+});
+
+export type FactCheck = z.infer<typeof factCheckSchema>;
+
+export function buildFactCheckPrompt(
+  content: string,
+  citations: { title: string | null; sourceUrl: string; snippet: string }[],
+): string {
+  const sources = citations
+    .map((c, i) => `[${i + 1}] ${c.title ?? c.sourceUrl}\n${c.snippet}`)
+    .join("\n\n");
+  return `Fact-check this post against ONLY the sources below. Flag any concrete factual claim (numbers, names, events, quotes) not supported by the sources. Opinions and general statements are fine. If you flag issues, return a revised post that removes or softens the unsupported claims while keeping the voice intact.
+
+Sources:
+${sources}
+
+Post:
 """
 ${content}
 """`;

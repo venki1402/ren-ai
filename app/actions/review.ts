@@ -3,13 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import {
-  critiqueContent,
-  generatePlatformVariant,
-  type GeneratedVariant,
-} from "@/lib/ai/generate";
+import { critiqueContent, type GeneratedVariant } from "@/lib/ai/generate";
+import { generateVariant } from "@/lib/ai/generate-variant";
 import { carryForward, persistDraftVersion } from "@/lib/drafts";
 import { profileFromUser } from "@/lib/persona";
+import { withTrace } from "@/lib/ai/observability/trace";
+import { indexPostedVariant } from "@/lib/ai/ingest";
+import { getFeedbackNote } from "@/lib/feedback";
 import { getAdapter } from "@/lib/adapters";
 import { getValidToken } from "@/lib/oauth";
 import type { PostResult } from "@/lib/adapters/types";
@@ -59,14 +59,24 @@ export async function retryVariant(
     },
   });
 
-  const regenerated = await generatePlatformVariant(
-    idea.seedText,
-    variant.platform,
-    profileFromUser(user),
+  const priorPattern = (await getFeedbackNote(user.id)) ?? undefined;
+  const regenerated = await withTrace(
     {
-      retryReason: RETRY_PHRASES[retryReason],
-      customInstruction: instruction ?? undefined,
+      name: `retry:${variant.platform}`,
+      userId: user.id,
+      ideaId: idea.id,
+      metadata: { retryReason, hasInstruction: !!instruction },
     },
+    () =>
+      generateVariant(idea.seedText, variant.platform, profileFromUser(user), {
+        userId: user.id,
+        sourceUrl: idea.seedNewsUrl,
+        feedback: {
+          retryReason: RETRY_PHRASES[retryReason],
+          customInstruction: instruction ?? undefined,
+          priorPattern,
+        },
+      }),
   );
 
   const carried: GeneratedVariant[] = variant.draft.platformVariants
@@ -152,6 +162,9 @@ export async function getPublishAction(variantId: string): Promise<PostResult> {
         where: { id: variant.draftId },
         data: { status: "posted" },
       });
+      // A posted variant is a signal of the user's real voice — index it for
+      // future voice-RAG retrieval (best-effort; never blocks publishing).
+      await indexPostedVariant(variantId);
       revalidatePath(`/ideas/${variant.draft.idea.id}`);
     }
     return result;
@@ -178,5 +191,6 @@ export async function confirmPosted(
     where: { id: variant.draftId },
     data: { status: "posted" },
   });
+  await indexPostedVariant(variantId); // voice index (best-effort)
   revalidatePath(`/ideas/${variant.draft.idea.id}`);
 }

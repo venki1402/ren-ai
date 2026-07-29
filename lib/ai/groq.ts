@@ -8,6 +8,13 @@ import {
   type LanguageModel,
 } from "ai";
 import { z } from "zod";
+import { withSpan } from "@/lib/ai/observability/trace";
+
+type TokenUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+};
 
 // Model-agnostic Groq wrapper (doc Section 2 & Note 10). Nothing here hardcodes
 // a model — callers pass a ModelTier so we can route drafting/critique to the
@@ -25,7 +32,7 @@ export function modelFor(tier: ModelTier): LanguageModel {
   return groq(modelIdFor(tier));
 }
 
-function modelIdFor(tier: ModelTier): string {
+export function modelIdFor(tier: ModelTier): string {
   // Defaults must be models that support Groq's `json_schema` response format,
   // since completeObject() is on the critical path (see JSON_MODE_FALLBACK).
   return tier === "light"
@@ -38,6 +45,7 @@ type BaseArgs = {
   system?: string;
   prompt: string;
   temperature?: number;
+  label?: string; // names the trace span (e.g. "plan", "draft", "critique")
 };
 
 // ─── Rate-limit handling ──────────────────────────────────────────────────
@@ -105,17 +113,26 @@ export async function complete({
   system,
   prompt,
   temperature,
+  label,
 }: BaseArgs): Promise<string> {
-  const { text } = await withRateLimitRetry(() =>
-    generateText({
-      model: modelFor(tier),
-      system,
-      prompt,
-      temperature,
-      maxRetries: 0,
-    }),
+  const model = modelIdFor(tier);
+  const rich = await withSpan(
+    { name: label ?? `llm:${tier}`, kind: "llm", tier, model, input: { system, prompt } },
+    async () => {
+      const { text, usage } = await withRateLimitRetry(() =>
+        generateText({
+          model: modelFor(tier),
+          system,
+          prompt,
+          temperature,
+          maxRetries: 0,
+        }),
+      );
+      return { text, usage: usage as TokenUsage };
+    },
+    (r) => ({ model, tier, usage: r.usage, output: r.text }),
   );
-  return text;
+  return rich.text;
 }
 
 /** Streaming text completion — returns a text stream for progressive reveal. */
@@ -201,12 +218,35 @@ export async function completeObject<T>({
   prompt,
   schema,
   temperature,
+  label,
 }: BaseArgs & { schema: z.ZodType<T> }): Promise<T> {
   const modelId = modelIdFor(tier);
+  const rich = await withSpan(
+    { name: label ?? `llm:${tier}`, kind: "llm", tier, model: modelId, input: { system, prompt } },
+    () => runCompleteObject({ modelId, system, prompt, schema, temperature }),
+    (r) => ({ model: modelId, tier, usage: r.usage, output: r.object }),
+  );
+  return rich.object;
+}
 
+/** The un-instrumented body of completeObject: native json_schema with a
+ * plain-text JSON-mode fallback. Returns the parsed object plus token usage. */
+async function runCompleteObject<T>({
+  modelId,
+  system,
+  prompt,
+  schema,
+  temperature,
+}: {
+  modelId: string;
+  system?: string;
+  prompt: string;
+  schema: z.ZodType<T>;
+  temperature?: number;
+}): Promise<{ object: T; usage?: TokenUsage }> {
   if (!jsonSchemaUnsupported.has(modelId)) {
     try {
-      const { object } = await withRateLimitRetry(() =>
+      const { object, usage } = await withRateLimitRetry(() =>
         generateObject({
           model: groq(modelId),
           system,
@@ -216,7 +256,7 @@ export async function completeObject<T>({
           maxRetries: 0,
         }),
       );
-      return object;
+      return { object, usage: usage as TokenUsage };
     } catch (error) {
       if (isJsonSchemaUnsupportedError(error)) {
         jsonSchemaUnsupported.add(modelId);
@@ -236,7 +276,7 @@ export async function completeObject<T>({
   const fallbackPrompt = `${prompt}\n\n${schemaInstruction(schema)}`;
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const { text } = await withRateLimitRetry(() =>
+    const { text, usage } = await withRateLimitRetry(() =>
       generateText({
         model: groq(modelId),
         system,
@@ -246,7 +286,7 @@ export async function completeObject<T>({
       }),
     );
     try {
-      return schema.parse(extractJson(text));
+      return { object: schema.parse(extractJson(text)), usage: usage as TokenUsage };
     } catch (error) {
       lastError = error; // malformed JSON or Zod mismatch — try once more
     }
