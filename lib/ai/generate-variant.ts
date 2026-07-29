@@ -11,6 +11,7 @@ import type { PersonaProfile } from "@/lib/persona-shared";
 export type GenerateCtx = {
   userId: string;
   sourceUrl?: string | null;
+  threadId?: string; // stable id for durable/resumable v2 runs
   feedback?: {
     retryReason?: string;
     customInstruction?: string;
