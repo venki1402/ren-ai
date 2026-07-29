@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -60,17 +61,19 @@ export async function retryVariant(
   });
 
   const priorPattern = (await getFeedbackNote(user.id)) ?? undefined;
+  const threadId = `${idea.id}:${variant.platform}:retry:${randomUUID()}`;
   const regenerated = await withTrace(
     {
       name: `retry:${variant.platform}`,
       userId: user.id,
       ideaId: idea.id,
-      metadata: { retryReason, hasInstruction: !!instruction },
+      metadata: { retryReason, hasInstruction: !!instruction, threadId },
     },
     () =>
       generateVariant(idea.seedText, variant.platform, profileFromUser(user), {
         userId: user.id,
         sourceUrl: idea.seedNewsUrl,
+        threadId,
         feedback: {
           retryReason: RETRY_PHRASES[retryReason],
           customInstruction: instruction ?? undefined,
