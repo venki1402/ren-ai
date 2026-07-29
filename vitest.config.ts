@@ -9,7 +9,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["lib/**/*.test.ts", "evals/**/*.eval.test.ts"],
-    testTimeout: 120_000, // evals make several LLM calls per case
+    testTimeout: 300_000, // evals make several LLM calls per case; web-grounded
+    // cases add a Tavily search + fact-check + revise pass, and Groq's free-tier
+    // TPM limit inserts backoff waits — so a single case can run for minutes.
     setupFiles: ["dotenv/config"],
   },
   resolve: {

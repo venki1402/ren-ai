@@ -2,6 +2,7 @@ import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import { modelFor, modelIdFor } from "@/lib/ai/groq";
 import { retrieveVoiceExemplars, retrieveGrounding } from "@/lib/ai/retrieval";
+import { tavilyEnabled, tavilySearch } from "@/lib/ai/tavily";
 import { buildResearchSystemPrompt, buildResearchPrompt } from "@/lib/ai/prompts";
 import { withSpan } from "@/lib/ai/observability/trace";
 import { traceLLM } from "@/lib/ai/observability/langsmith";
@@ -76,6 +77,34 @@ export async function runResearcher(opts: {
             }));
           },
         }),
+        // Live web search — only offered when Tavily is configured. Results
+        // become citations (grounded + fact-checked + shown in the UI).
+        ...(tavilyEnabled()
+          ? {
+              webSearch: tool({
+                description:
+                  "Search the live web for current, factual information (news, stats, events) to ground the post. Use when the idea references facts not in the creator's own posts.",
+                inputSchema: z.object({
+                  query: z.string().describe("a focused web search query"),
+                }),
+                execute: async ({ query }) => {
+                  const results = await tavilySearch(query, { maxResults: 5 });
+                  for (const r of results)
+                    citationHits.push({
+                      sourceUrl: r.url,
+                      title: r.title,
+                      snippet: r.content.slice(0, 400),
+                    });
+                  return results.map((r) => ({
+                    title: r.title,
+                    url: r.url,
+                    snippet: r.content.slice(0, 300),
+                    score: Number(r.score.toFixed(3)),
+                  }));
+                },
+              }),
+            }
+          : {}),
       };
 
       try {
@@ -93,7 +122,7 @@ export async function runResearcher(opts: {
               async () => {
                 const r = await generateText({
                   model: modelFor("primary"),
-                  system: buildResearchSystemPrompt(profile),
+                  system: buildResearchSystemPrompt(profile, tavilyEnabled()),
                   prompt: buildResearchPrompt(seedText, platform, !!sourceUrl),
                   tools,
                   stopWhen: stepCountIs(5),

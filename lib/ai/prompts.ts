@@ -282,7 +282,10 @@ ${content}
 // ─── v2 multi-agent pipeline prompts ────────────────────────────────────────
 
 /** System prompt for the tool-using Researcher agent. */
-export function buildResearchSystemPrompt(profile: PersonaProfile): string {
+export function buildResearchSystemPrompt(
+  profile: PersonaProfile,
+  hasWebSearch = false,
+): string {
   const persona = buildPersonaBlock(profile);
   return `You are a research assistant preparing to help write a social post for one specific creator. You have tools to gather evidence. Use them, then write a short brief.
 
@@ -290,8 +293,12 @@ ${persona || "The creator has no stored persona; focus on the idea itself."}
 
 Guidance:
 - Call findVoiceExemplars to retrieve the creator's OWN past posts (for voice reference). Query it with the core topic of the seed idea.
-- If the idea is seeded from a source, call findGrounding to pull real facts you can cite. Query it with the specific claims/topics you'd want to verify.
-- Do not fabricate facts. If grounding returns nothing useful, say so.
+- If the idea is seeded from a source, call findGrounding to pull real facts you can cite. Query it with the specific claims/topics you'd want to verify.${
+    hasWebSearch
+      ? `\n- Call webSearch for current, real-world facts (recent news, stats, events) the post should be grounded in — especially when the creator's own posts and the local sources don't cover them. Prefer specific, verifiable queries.`
+      : ""
+  }
+- Do not fabricate facts. If a tool returns nothing useful, say so.
 - Keep the final brief under 150 words: the sharpest angle, any concrete facts worth citing, and one note on the creator's voice.`;
 }
 
