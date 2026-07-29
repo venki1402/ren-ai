@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { z } from "zod";
+import { completeObject } from "@/lib/ai/groq";
 import { critiqueContent } from "@/lib/ai/generate";
 import { overallScore } from "@/lib/score";
 import { detectAiTells, checkPlatformFormat } from "@/lib/ai/text";
@@ -55,6 +57,46 @@ export async function judge(
     ]),
   ) as unknown as RubricScore;
   return { scores, overall: overallScore(scores) };
+}
+
+const faithfulnessSchema = z.object({
+  grounded_fraction: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("Fraction of the post's concrete factual claims supported by the sources."),
+  unsupported: z.array(z.string()).describe("Claims not backed by any source."),
+});
+
+/**
+ * Faithfulness / groundedness: fraction of a post's concrete factual claims
+ * that the cited sources actually support (1 when there are no citations, i.e.
+ * nothing to ground). An LLM-judge retrieval-quality metric.
+ */
+export async function judgeFaithfulness(
+  content: string,
+  citations: Citation[],
+): Promise<number> {
+  if (citations.length === 0) return 1;
+  const sources = citations
+    .map((c, i) => `[${i + 1}] ${c.title ?? c.sourceUrl}\n${c.snippet}`)
+    .join("\n\n");
+  const { grounded_fraction } = await completeObject({
+    tier: "primary",
+    label: "eval:faithfulness",
+    temperature: 0.1,
+    schema: faithfulnessSchema,
+    prompt: `Judge how well this post's concrete factual claims (numbers, names, events) are supported by ONLY the sources below. Opinions/general statements don't count. Return the fraction supported.
+
+Sources:
+${sources}
+
+Post:
+"""
+${content}
+"""`,
+  });
+  return grounded_fraction;
 }
 
 export interface BehavioralResult {
