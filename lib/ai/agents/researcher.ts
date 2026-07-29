@@ -4,6 +4,7 @@ import { modelFor, modelIdFor } from "@/lib/ai/groq";
 import { retrieveVoiceExemplars, retrieveGrounding } from "@/lib/ai/retrieval";
 import { buildResearchSystemPrompt, buildResearchPrompt } from "@/lib/ai/prompts";
 import { withSpan } from "@/lib/ai/observability/trace";
+import { traceLLM } from "@/lib/ai/observability/langsmith";
 import type { PlatformId } from "@/lib/platforms";
 import type { PersonaProfile } from "@/lib/persona-shared";
 import type { Citation, ResearchBrief, VoiceExemplar } from "@/lib/ai/agents/types";
@@ -87,14 +88,29 @@ export async function runResearcher(opts: {
             input: { seedText },
           },
           () =>
-            generateText({
-              model: modelFor("primary"),
-              system: buildResearchSystemPrompt(profile),
-              prompt: buildResearchPrompt(seedText, platform, !!sourceUrl),
-              tools,
-              stopWhen: stepCountIs(5),
-              maxRetries: 0,
-            }),
+            traceLLM(
+              "llm:research",
+              async () => {
+                const r = await generateText({
+                  model: modelFor("primary"),
+                  system: buildResearchSystemPrompt(profile),
+                  prompt: buildResearchPrompt(seedText, platform, !!sourceUrl),
+                  tools,
+                  stopWhen: stepCountIs(5),
+                  maxRetries: 0,
+                });
+                return {
+                  result: r,
+                  usage: r.totalUsage as {
+                    inputTokens?: number;
+                    outputTokens?: number;
+                    totalTokens?: number;
+                  },
+                  model: modelIdFor("primary"),
+                };
+              },
+              { platform },
+            ),
           (r) => ({
             model: modelIdFor("primary"),
             tier: "primary",

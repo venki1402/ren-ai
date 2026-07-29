@@ -9,6 +9,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import { withSpan } from "@/lib/ai/observability/trace";
+import { traceLLM } from "@/lib/ai/observability/langsmith";
 
 type TokenUsage = {
   inputTokens?: number;
@@ -116,20 +117,26 @@ export async function complete({
   label,
 }: BaseArgs): Promise<string> {
   const model = modelIdFor(tier);
+  const spanName = label ?? `llm:${tier}`;
   const rich = await withSpan(
-    { name: label ?? `llm:${tier}`, kind: "llm", tier, model, input: { system, prompt } },
-    async () => {
-      const { text, usage } = await withRateLimitRetry(() =>
-        generateText({
-          model: modelFor(tier),
-          system,
-          prompt,
-          temperature,
-          maxRetries: 0,
-        }),
-      );
-      return { text, usage: usage as TokenUsage };
-    },
+    { name: spanName, kind: "llm", tier, model, input: { system, prompt } },
+    () =>
+      traceLLM(
+        spanName,
+        async () => {
+          const { text, usage } = await withRateLimitRetry(() =>
+            generateText({
+              model: modelFor(tier),
+              system,
+              prompt,
+              temperature,
+              maxRetries: 0,
+            }),
+          );
+          return { result: { text, usage: usage as TokenUsage }, usage: usage as TokenUsage, model };
+        },
+        { tier },
+      ),
     (r) => ({ model, tier, usage: r.usage, output: r.text }),
   );
   return rich.text;
@@ -221,9 +228,18 @@ export async function completeObject<T>({
   label,
 }: BaseArgs & { schema: z.ZodType<T> }): Promise<T> {
   const modelId = modelIdFor(tier);
+  const spanName = label ?? `llm:${tier}`;
   const rich = await withSpan(
-    { name: label ?? `llm:${tier}`, kind: "llm", tier, model: modelId, input: { system, prompt } },
-    () => runCompleteObject({ modelId, system, prompt, schema, temperature }),
+    { name: spanName, kind: "llm", tier, model: modelId, input: { system, prompt } },
+    () =>
+      traceLLM(
+        spanName,
+        async () => {
+          const r = await runCompleteObject({ modelId, system, prompt, schema, temperature });
+          return { result: r, usage: r.usage, model: modelId };
+        },
+        { tier },
+      ),
     (r) => ({ model: modelId, tier, usage: r.usage, output: r.object }),
   );
   return rich.object;
