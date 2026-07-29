@@ -10,6 +10,7 @@ import {
   type PersonaProfile,
 } from "@/lib/persona-shared";
 import type { ResearchBrief } from "@/lib/ai/agents/types";
+import { INSTRUCTION_HIERARCHY, wrapUntrusted } from "@/lib/ai/safety";
 
 // Platform-specific prompting (doc Section 6). Each platform gets its OWN
 // system prompt — never one prompt reformatted per platform.
@@ -192,11 +193,17 @@ export function buildGenerationPrompt(
 - Identity salience: ${SALIENCE_INSTRUCTION[plan.identitySalience]}`,
   ];
 
+  // Any retrieved/web text below is untrusted — state the instruction hierarchy
+  // once, then fence each block so the model treats it as data, not commands.
+  if (research?.voiceExemplars.length || research?.citations.length) {
+    parts.push(INSTRUCTION_HIERARCHY);
+  }
+
   // Voice few-shot: the creator's OWN past posts, so the draft matches their
   // established voice — imitate the voice, NOT the topic.
   if (research?.voiceExemplars.length) {
     const shots = research.voiceExemplars
-      .map((e, i) => `Example ${i + 1} (${e.platform}):\n"""\n${e.content}\n"""`)
+      .map((e, i) => `Example ${i + 1} (${e.platform}):\n${wrapUntrusted(`past-post-${i + 1}`, e.content)}`)
       .join("\n\n");
     parts.push(
       `The creator's own past posts, for VOICE reference only (match the tone, rhythm, and diction — do not reuse their topics or copy phrasing):\n\n${shots}`,
@@ -206,10 +213,10 @@ export function buildGenerationPrompt(
   // Grounding: real facts + citations the post may draw on.
   if (research?.citations.length) {
     const facts = research.citations
-      .map((c, i) => `[${i + 1}] ${c.title ?? c.sourceUrl}\n${c.snippet}`)
+      .map((c, i) => `[${i + 1}] ${c.title ?? c.sourceUrl}\n${wrapUntrusted(`source-${i + 1}`, c.snippet)}`)
       .join("\n\n");
     parts.push(
-      `Grounding material (use only facts supported here; do not invent specifics). Research brief:\n${research.brief}\n\nSources:\n${facts}`,
+      `Grounding material (use only facts supported here; do not invent specifics).\n\nResearch brief:\n${wrapUntrusted("brief", research.brief)}\n\nSources:\n${facts}`,
     );
   }
 
@@ -299,7 +306,9 @@ Guidance:
       : ""
   }
 - Do not fabricate facts. If a tool returns nothing useful, say so.
-- Keep the final brief under 150 words: the sharpest angle, any concrete facts worth citing, and one note on the creator's voice.`;
+- Keep the final brief under 150 words: the sharpest angle, any concrete facts worth citing, and one note on the creator's voice.
+
+${INSTRUCTION_HIERARCHY}`;
 }
 
 /** User prompt kicking off the Researcher agent. */

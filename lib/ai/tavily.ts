@@ -1,4 +1,5 @@
 import { withSpan } from "@/lib/ai/observability/trace";
+import { sanitizeRetrieved } from "@/lib/ai/safety";
 
 // Live web search via Tavily — the Researcher's tool for grounding posts in
 // current, real facts (news, stats, events) that aren't in the local grounding
@@ -54,7 +55,7 @@ export async function tavilySearch(
           .map((r) => ({
             title: r.title ?? r.url!,
             url: r.url!,
-            content: r.content!,
+            content: sanitizeRetrieved(r.content!), // untrusted web text
             score: r.score ?? 0,
           }));
       } catch (err) {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { embed, embedMany, toVectorLiteral } from "@/lib/ai/embeddings";
 import { chunkText } from "@/lib/ai/text";
+import { safeFetch, sanitizeRetrieved } from "@/lib/ai/safety";
 import { overallScore, parseScore } from "@/lib/score";
 
 // Ingestion into the two RAG indexes. Both write the vector column via raw SQL
@@ -91,11 +92,10 @@ export async function indexGroundingSource(sourceUrl: string): Promise<void> {
 async function fetchArticleText(
   url: string,
 ): Promise<{ title: string | null; text: string }> {
-  const res = await fetch(url, {
+  // SSRF-guarded fetch (no private hosts, validated redirects, size cap).
+  const html = await safeFetch(url, {
     headers: { "user-agent": "Mozilla/5.0 (compatible; RenBot/1.0)" },
-    redirect: "follow",
   });
-  const html = await res.text();
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = titleMatch ? decodeEntities(titleMatch[1]).trim().slice(0, 300) : null;
   const text = decodeEntities(
@@ -106,7 +106,8 @@ async function fetchArticleText(
   )
     .replace(/\s+/g, " ")
     .trim();
-  return { title, text };
+  // Neutralize injection phrasing before it reaches the embedding + prompt path.
+  return { title, text: sanitizeRetrieved(text) };
 }
 
 function decodeEntities(s: string): string {
