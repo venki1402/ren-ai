@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Ren — one idea, tuned for every platform",
+  title: "ren ai",
   description:
     "Research, draft, refine, and publish platform-tuned posts with a human always in the loop.",
 };
