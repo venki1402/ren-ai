@@ -11,7 +11,8 @@
     "db:checkpointer": "node scripts/setup-checkpointer.mjs",
     "test": "vitest run lib",
     "test:watch": "vitest",
-    "eval": "RUN_EVALS=1 vitest run evals"
+    "eval": "RUN_EVALS=1 vitest run evals",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@ai-sdk/groq": "^4.0.13",
